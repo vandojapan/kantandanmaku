@@ -188,3 +188,13 @@ cargo build --release
 ```powershell
 .tools\au2.exe release --profile release
 ```
+
+## GitHub Actionsによる手動リリース
+
+GitHubの「Actions」から「手動ビルド・リリース」を選び、「Run workflow」を実行します。
+
+- `tag`: 公開するタグ名。例: `v0.1.0`
+- `title`: Releaseの表示名。空欄ではタグ名を使う
+- `prerelease`: 有効にするとプレリリースとして公開する
+
+ワークフローはWindowsでUnit Testを実行してから `au2 release --profile release` を実行します。生成した `.au2pkg.zip` はActionsの成果物として保存され、指定タグのGitHub Releaseへ添付されます。同じタグのReleaseが存在する場合は、添付済みのパッケージを更新します。

@@ -1,0 +1,120 @@
+name: 手動ビルド・リリース
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "作成または更新するGitHub Releaseのタグ（例: v0.1.0）"
+        required: true
+        type: string
+      title:
+        description: "Releaseのタイトル（空欄ならタグ名を使用）"
+        required: false
+        default: ""
+        type: string
+      prerelease:
+        description: "プレリリースとして公開する"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Windowsでビルド・検証・パッケージ化
+    runs-on: windows-latest
+
+    steps:
+      - name: ソースを取得
+        uses: actions/checkout@v4
+
+      - name: Rustをセットアップ
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: aviutl2-cliを取得
+        shell: pwsh
+        run: |
+          $au2Version = "0.11.2"
+          New-Item -ItemType Directory -Force -Path ".tools" | Out-Null
+          Invoke-WebRequest `
+            -Uri "https://github.com/sevenc-nanashi/aviutl2-cli/releases/download/$au2Version/au2-v$au2Version-windows.exe" `
+            -OutFile ".tools/au2.exe"
+          & ".tools/au2.exe" --version
+
+      - name: Unit Testを実行
+        shell: pwsh
+        run: |
+          cargo test
+          cargo test --no-default-features
+
+      - name: .auf2パッケージを生成
+        shell: pwsh
+        run: |
+          & ".tools/au2.exe" release --profile release
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          $package = Get-ChildItem "release" -Filter "*.au2pkg.zip" -File |
+            Select-Object -First 1
+          if ($null -eq $package) {
+            throw ".au2pkg.zip が生成されませんでした"
+          }
+
+      - name: パッケージを保存
+        uses: actions/upload-artifact@v4
+        with:
+          name: au2pkg
+          path: release/*.au2pkg.zip
+          if-no-files-found: error
+
+  release:
+    name: GitHub Releaseへ公開
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: パッケージを取得
+        uses: actions/download-artifact@v4
+        with:
+          name: au2pkg
+          path: dist
+
+      - name: Releaseを作成または更新
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TITLE: ${{ inputs.title }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+
+          package="$(find dist -type f -name '*.au2pkg.zip' -print -quit)"
+          test -n "$package"
+
+          title="$RELEASE_TITLE"
+          if [ -z "$title" ]; then
+            title="$RELEASE_TAG"
+          fi
+
+          prerelease_args=()
+          if [ "$PRERELEASE" = "true" ]; then
+            prerelease_args+=(--prerelease)
+          fi
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$package" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$package" \
+              --title "$title" \
+              --target "$GITHUB_SHA" \
+              --generate-notes \
+              "${prerelease_args[@]}"
+          fi
