@@ -19,3 +19,19 @@ source = "target/debug/kantandanmaku.dll"
 [artifacts.kantandanmaku-auf2.profiles.release]
 build = ["cargo build --release"]
 source = "target/release/kantandanmaku.dll"
+
+[artifacts.sample-readme]
+source = "samples/README.md"
+destination = "Script/弾幕生成フィルタ/README.md"
+
+[artifacts.sample-touhou]
+source = "samples/touhou_rotating_ring.rhai"
+destination = "Script/弾幕生成フィルタ/touhou_rotating_ring.rhai"
+
+[artifacts.sample-dodonpachi-daioujou]
+source = "samples/dodonpachi_daioujou_aimed_fan.rhai"
+destination = "Script/弾幕生成フィルタ/dodonpachi_daioujou_aimed_fan.rhai"
+
+[artifacts.sample-mushihimesama]
+source = "samples/mushihimesama_spiral_layers.rhai"
+destination = "Script/弾幕生成フィルタ/mushihimesama_spiral_layers.rhai"

@@ -90,6 +90,7 @@ jobs:
       - name: Releaseを作成または更新
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ inputs.tag }}
           RELEASE_TITLE: ${{ inputs.title }}
           PRERELEASE: ${{ inputs.prerelease }}
@@ -109,10 +110,11 @@ jobs:
             prerelease_args+=(--prerelease)
           fi
 
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "$package" --clobber
+          if gh release view "$RELEASE_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$package" --clobber --repo "$GH_REPO"
           else
             gh release create "$RELEASE_TAG" "$package" \
+              --repo "$GH_REPO" \
               --title "$title" \
               --target "$GITHUB_SHA" \
               --generate-notes \

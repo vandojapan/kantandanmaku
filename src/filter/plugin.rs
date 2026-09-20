@@ -18,14 +18,6 @@ enum ScriptMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, aviutl2::filter::FilterConfigSelectItems)]
-enum TargetSource {
-    #[item(name = "手動座標")]
-    Manual,
-    #[item(name = "レイヤー最新座標")]
-    Layer,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, aviutl2::filter::FilterConfigSelectItems)]
 enum PresetChoice {
     #[item(name = "自機狙い奇数5方向")]
     AimedOdd,
@@ -63,14 +55,10 @@ struct FilterConfig {
         default = PresetChoice::Hybrid
     )]
     preset: PresetChoice,
-    #[select(
-        name = "自機座標モード",
-        items = TargetSource,
-        default = TargetSource::Manual
-    )]
-    target_source: TargetSource,
-    #[track(name = "自機レイヤー", range = 1.0..=100.0, step = 1.0, default = 2.0)]
-    target_layer: f64,
+    #[check(name = "レイヤーを参照", default = false)]
+    reference_layer: bool,
+    #[string(name = "自機レイヤー", default = "2")]
+    target_layer: String,
     #[track(name = "ターゲット X", range = -10000.0..=10000.0, step = 1.0, default = 320.0)]
     target_x: f64,
     #[track(name = "ターゲット Y", range = -10000.0..=10000.0, step = 1.0, default = 0.0)]
@@ -86,6 +74,8 @@ struct FilterConfig {
     seed: f64,
     #[check(name = "進行方向を向く", default = false)]
     follow_path: bool,
+    #[track(name = "回転（移動量）", range = -10.0..=10.0, step = 0.01, default = 0.0)]
+    rotation_per_pixel_degrees: f64,
     #[text(name = "カスタムスクリプト", default = "")]
     custom_script: String,
 }
@@ -158,6 +148,7 @@ impl FilterPlugin for DanmakuFilter {
         let object = ImageResource::Object;
         let rotation_options = RotationOptions {
             follow_path: config.follow_path,
+            rotation_per_pixel_degrees: config.rotation_per_pixel_degrees,
         };
         for resolved in bullets {
             let mut param = DrawImageParam::default();
@@ -178,16 +169,16 @@ impl FilterPlugin for DanmakuFilter {
 }
 
 fn resolve_target(config: &FilterConfig, video: &mut FilterProcVideo<()>) -> (f64, f64) {
-    if config.target_source == TargetSource::Layer {
-        if let Some(target) = resolve_layer_target(config.target_layer, video) {
+    if config.reference_layer {
+        if let Some(target) = resolve_layer_target(&config.target_layer, video) {
             return target;
         }
     }
     (config.target_x, config.target_y)
 }
 
-fn resolve_layer_target(user_layer: f64, video: &mut FilterProcVideo<()>) -> Option<(f64, f64)> {
-    let api_layer = user_layer.round().clamp(1.0, 100.0) as u32 - 1;
+fn resolve_layer_target(user_layer: &str, video: &mut FilterProcVideo<()>) -> Option<(f64, f64)> {
+    let api_layer = parse_target_layer(user_layer)?;
     // The active object on the filter's own layer is the source object itself.
     // Avoid asking AviUtl2 to recursively resolve its output parameters.
     if api_layer == video.object.layer {
@@ -200,6 +191,15 @@ fn resolve_layer_target(user_layer: f64, video: &mut FilterProcVideo<()>) -> Opt
         .ok()?;
     let emitter = video.get_output_image_param(None, 0.0).ok()?;
     local_target_coordinates(target.x, target.y, emitter.x, emitter.y)
+}
+
+fn parse_target_layer(user_layer: &str) -> Option<u32> {
+    user_layer
+        .trim()
+        .parse::<u32>()
+        .ok()
+        .filter(|layer| (1..=100).contains(layer))
+        .map(|layer| layer - 1)
 }
 
 fn local_target_coordinates(
@@ -220,11 +220,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ui_uses_checkbox_layer_field_and_movement_rotation_track() {
+        let items = FilterConfig::to_config_items();
+        let layer_reference = items
+            .iter()
+            .find(|item| item.name() == "レイヤーを参照")
+            .expect("layer reference checkbox is missing");
+        let target_layer = items
+            .iter()
+            .find(|item| item.name() == "自機レイヤー")
+            .expect("target layer field is missing");
+        let movement_rotation = items
+            .iter()
+            .find(|item| item.name() == "回転（移動量）")
+            .expect("movement rotation track is missing");
+
+        assert!(matches!(layer_reference, FilterConfigItem::Check(_)));
+        assert!(matches!(target_layer, FilterConfigItem::String(_)));
+        assert!(matches!(movement_rotation, FilterConfigItem::Track(_)));
+        assert!(!items.iter().any(|item| item.name() == "自機座標モード"));
+    }
+
+    #[test]
     fn layer_target_is_converted_from_scene_to_emitter_local_coordinates() {
         assert_eq!(
             local_target_coordinates(500.0, 100.0, 120.0, -20.0),
             Some((380.0, 120.0))
         );
         assert_eq!(local_target_coordinates(f32::NAN, 0.0, 0.0, 0.0), None);
+    }
+
+    #[test]
+    fn target_layer_field_accepts_only_layers_one_through_one_hundred() {
+        assert_eq!(parse_target_layer("1"), Some(0));
+        assert_eq!(parse_target_layer(" 25 "), Some(24));
+        assert_eq!(parse_target_layer("100"), Some(99));
+        assert_eq!(parse_target_layer("0"), None);
+        assert_eq!(parse_target_layer("101"), None);
+        assert_eq!(parse_target_layer("2.5"), None);
+        assert_eq!(parse_target_layer("abc"), None);
     }
 }

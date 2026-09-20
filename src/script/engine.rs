@@ -410,6 +410,41 @@ mod tests {
         assert!(bullets.iter().any(|bullet| bullet.bullet.i == 2));
     }
 
+    #[test]
+    fn bundled_title_samples_compile_and_evaluate() {
+        let samples = [
+            (
+                "touhou_rotating_ring",
+                include_str!("../../samples/touhou_rotating_ring.rhai"),
+            ),
+            (
+                "dodonpachi_daioujou_aimed_fan",
+                include_str!("../../samples/dodonpachi_daioujou_aimed_fan.rhai"),
+            ),
+            (
+                "mushihimesama_spiral_layers",
+                include_str!("../../samples/mushihimesama_spiral_layers.rhai"),
+            ),
+        ];
+        let input = crate::danmaku::RuntimeInput {
+            time: 0.25,
+            interval: 0.2,
+            seed: 1,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            target_x: 500.0,
+            target_y: 100.0,
+        };
+
+        for (name, source) in samples {
+            let script = ScriptEngine::compile(source)
+                .unwrap_or_else(|error| panic!("{name} failed to compile: {error}"));
+            let bullets = crate::danmaku::evaluate(&script, input, Default::default())
+                .unwrap_or_else(|error| panic!("{name} failed to evaluate: {error}"));
+            assert!(!bullets.is_empty(), "{name} produced no bullets");
+        }
+    }
+
     fn preset_input(time: f64, interval: f64, target_degrees: f64) -> crate::danmaku::RuntimeInput {
         let target_angle = target_degrees.to_radians();
         crate::danmaku::RuntimeInput {
