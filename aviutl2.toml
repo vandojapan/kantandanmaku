@@ -1,0 +1,21 @@
+#:schema ./.aviutl2-cli/aviutl2.schema.json
+# 設定ファイルの仕様: https://github.com/sevenc-nanashi/aviutl2-cli
+
+[project]
+id = "kantandanmaku"
+name = "kantandanmaku"
+version = "0.1.0"
+
+[development]
+aviutl2_version = "latest"
+
+[artifacts.kantandanmaku-auf2]
+destination = "Plugin/kantandanmaku.auf2"
+
+[artifacts.kantandanmaku-auf2.profiles.debug]
+build = ["cargo build"]
+source = "target/debug/kantandanmaku.dll"
+
+[artifacts.kantandanmaku-auf2.profiles.release]
+build = ["cargo build --release"]
+source = "target/release/kantandanmaku.dll"

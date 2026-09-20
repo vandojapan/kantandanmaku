@@ -1,0 +1,19 @@
+[package]
+name = "kantandanmaku"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["aviutl2-plugin"]
+aviutl2-plugin = ["dep:aviutl2"]
+
+[dependencies]
+aviutl2 = { version = "0.46.1", features = ["filter"], optional = true }
+rhai = { version = "1.23.0", default-features = false, features = ["std"] }
+
+[profile.release]
+panic = "abort"
