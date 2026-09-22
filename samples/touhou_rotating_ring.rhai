@@ -4,8 +4,11 @@ spawn {
     ring_count = 32;
     count = ring_count;
 
-    phase = wave * deg(9);
-    angle = ring(i, count) + phase;
+    // 密度でWave数が変わっても、1秒あたりの位相回転量は保つ。
+    phase = wave * deg(9) / density;
+    let span = if spread_angle > 0.0 { spread_angle } else { deg(360) };
+    let divisor = if span < deg(360) { count - 1 } else { count };
+    angle = i * span / divisor + phase;
 
     speed = 250 + (wave % 3) * 30;
     life = 6;

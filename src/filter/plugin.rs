@@ -65,6 +65,10 @@ struct FilterConfig {
     target_y: f64,
     #[track(name = "発射間隔", range = 0.01..=10.0, step = 0.01, default = 0.2)]
     interval: f64,
+    #[track(name = "射出幅（全体）", range = 0.0..=360.0, step = 1.0, default = 0.0)]
+    spread_angle_degrees: f64,
+    #[track(name = "密度", range = 0.25..=4.0, step = 0.01, default = 1.0)]
+    density: f64,
     #[track(
         name = "シード",
         range = -2147483648.0..=2147483647.0,
@@ -140,6 +144,8 @@ impl FilterPlugin for DanmakuFilter {
             RuntimeLimits::default(),
             RuntimeOptions {
                 calculate_heading: config.follow_path,
+                spread_angle_degrees: config.spread_angle_degrees,
+                density: config.density,
                 ..RuntimeOptions::default()
             },
         )
@@ -234,10 +240,20 @@ mod tests {
             .iter()
             .find(|item| item.name() == "回転（移動量）")
             .expect("movement rotation track is missing");
+        let spread_angle = items
+            .iter()
+            .find(|item| item.name() == "射出幅（全体）")
+            .expect("spread angle track is missing");
+        let density = items
+            .iter()
+            .find(|item| item.name() == "密度")
+            .expect("density track is missing");
 
         assert!(matches!(layer_reference, FilterConfigItem::Check(_)));
         assert!(matches!(target_layer, FilterConfigItem::String(_)));
         assert!(matches!(movement_rotation, FilterConfigItem::Track(_)));
+        assert!(matches!(spread_angle, FilterConfigItem::Track(_)));
+        assert!(matches!(density, FilterConfigItem::Track(_)));
         assert!(!items.iter().any(|item| item.name() == "自機座標モード"));
     }
 

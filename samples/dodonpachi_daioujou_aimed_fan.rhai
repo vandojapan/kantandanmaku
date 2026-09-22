@@ -7,8 +7,10 @@ spawn {
 
     layer = floor(i / ways);
     slot = i % ways;
-    base_angle = quantize(aim(), deg(2.8125));
-    angle = base_angle + (slot - (ways - 1) / 2) * deg(3.5);
+    // 高密度ほど狙い角の量子化を細かくする。
+    base_angle = quantize(aim(), deg(2.8125) / density);
+    let span = if spread_angle > 0.0 { spread_angle } else { deg(21) };
+    angle = base_angle + (slot - (ways - 1) / 2) * span / (ways - 1);
 
     speed = 520 + layer * 120;
     life = 4;

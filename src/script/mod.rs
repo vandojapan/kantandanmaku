@@ -24,7 +24,8 @@ impl Preset {
                 r#"
 spawn {
     count = 5;
-    angle = aim() + (i - (count - 1) / 2) * deg(8);
+    let span = if spread_angle > 0.0 { spread_angle } else { deg(32) };
+    angle = aim() + (i - (count - 1) / 2) * span / (count - 1);
     speed = 420;
     life = 6;
 }
@@ -41,7 +42,8 @@ motion {
 spawn {
     count = 5;
     base_angle = quantize(aim(), deg(5.625));
-    angle = base_angle + (i - (count - 1) / 2) * deg(7);
+    let span = if spread_angle > 0.0 { spread_angle } else { deg(28) };
+    angle = base_angle + (i - (count - 1) / 2) * span / (count - 1);
     speed = 620;
     life = 5;
 }
@@ -61,7 +63,9 @@ spawn {
     count = ring_count * layers;
     layer = floor(i / ring_count);
     slot = i % ring_count;
-    angle = ring(slot, ring_count);
+    let span = if spread_angle > 0.0 { spread_angle } else { deg(360) };
+    let divisor = if span < deg(360) { ring_count - 1 } else { ring_count };
+    angle = slot * span / divisor;
     speed = 280 + layer * 140;
     life = 6;
 }
@@ -82,8 +86,9 @@ spawn {
     layer = floor(i / ways);
     slot = i % ways;
     base_angle = quantize(aim(), deg(5.625));
-    phase = sin(wave * deg(30)) * deg(6);
-    angle = base_angle + phase + (slot - (ways - 1) / 2) * deg(8);
+    phase = sin(wave * deg(30) / density) * deg(6);
+    let span = if spread_angle > 0.0 { spread_angle } else { deg(32) };
+    angle = base_angle + phase + (slot - (ways - 1) / 2) * span / (ways - 1);
     speed = 320 + layer * 140;
     life = 6;
 }

@@ -2,7 +2,7 @@ use super::{active_wave_count, wave_at, Bullet, BulletState};
 use crate::script::{CompiledScript, ScriptContext, ScriptError, SpawnValues};
 
 pub const MAX_BULLETS: usize = 4096;
-pub const MAX_WAVES: usize = 256;
+pub const MAX_WAVES: usize = 1024;
 pub const MAX_LIFE_SECONDS: f64 = 30.0;
 pub const MAX_SCRIPT_EVALUATIONS: usize = 65_536;
 pub const DEFAULT_HEADING_SAMPLE_SECONDS: f64 = 1.0 / 120.0;
@@ -30,6 +30,10 @@ impl Default for RuntimeLimits {
 pub struct RuntimeOptions {
     pub calculate_heading: bool,
     pub heading_sample_seconds: f64,
+    /// Total angular coverage in degrees; 0 lets each script use its own default.
+    pub spread_angle_degrees: f64,
+    /// Multiplies the wave frequency; 1.0 preserves the script's timing.
+    pub density: f64,
 }
 
 impl Default for RuntimeOptions {
@@ -37,6 +41,8 @@ impl Default for RuntimeOptions {
         Self {
             calculate_heading: false,
             heading_sample_seconds: DEFAULT_HEADING_SAMPLE_SECONDS,
+            spread_angle_degrees: 0.0,
+            density: 1.0,
         }
     }
 }
@@ -75,16 +81,17 @@ pub fn evaluate_with_options(
     limits: RuntimeLimits,
     options: RuntimeOptions,
 ) -> RuntimeResult {
-    let current = wave_at(input.time, input.interval)
-        .map_err(|message| ScriptError::InvalidValue(message.to_string()))?;
     validate_input(input, limits)?;
     validate_options(options)?;
+    let interval = input.interval / options.density;
+    let current = wave_at(input.time, interval)
+        .map_err(|message| ScriptError::InvalidValue(message.to_string()))?;
 
     // Life is intentionally bounded.  This lets us enumerate only a bounded
     // recent history rather than replaying every wave since t=0.
-    let wave_count = active_wave_count(limits.max_life_seconds, input.interval, limits.max_waves)
+    let wave_count = active_wave_count(limits.max_life_seconds, interval, limits.max_waves)
         .map_err(|message| ScriptError::InvalidValue(message.to_string()))?;
-    if (limits.max_life_seconds / input.interval).ceil() as usize + 1 > limits.max_waves {
+    if (limits.max_life_seconds / interval).ceil() as usize + 1 > limits.max_waves {
         return Err(ScriptError::InvalidValue(format!(
             "interval is too small for the wave limit (max {} concurrent waves)",
             limits.max_waves
@@ -101,7 +108,7 @@ pub fn evaluate_with_options(
             break;
         }
 
-        let spawn_time = wave as f64 * input.interval;
+        let spawn_time = wave as f64 * interval;
         let age = input.time.max(0.0) - spawn_time;
         if age < 0.0 {
             continue;
@@ -112,7 +119,7 @@ pub fn evaluate_with_options(
             &mut evaluator,
             &mut evaluations,
             limits.max_script_evaluations,
-            ScriptContext::spawn(0, 0, wave, spawn_time, input),
+            ScriptContext::spawn(0, 0, wave, spawn_time, input, options),
         )?;
         validate_life(probe.life, limits.max_life_seconds)?;
         let count = checked_count(probe.count, limits.max_bullets)?;
@@ -129,7 +136,7 @@ pub fn evaluate_with_options(
                     &mut evaluator,
                     &mut evaluations,
                     limits.max_script_evaluations,
-                    ScriptContext::spawn(i as u32, count as u32, wave, spawn_time, input),
+                    ScriptContext::spawn(i as u32, count as u32, wave, spawn_time, input, options),
                 )?
             };
             validate_life(spawn.life, limits.max_life_seconds)?;
@@ -151,6 +158,7 @@ pub fn evaluate_with_options(
                 input.time.max(0.0),
                 age,
                 input,
+                options,
                 spawn,
             );
             if evaluations >= limits.max_script_evaluations {
@@ -323,9 +331,16 @@ fn validate_input(input: RuntimeInput, limits: RuntimeLimits) -> Result<(), Scri
 }
 
 fn validate_options(options: RuntimeOptions) -> Result<(), ScriptError> {
-    if !options.heading_sample_seconds.is_finite() || options.heading_sample_seconds <= 0.0 {
+    if !options.heading_sample_seconds.is_finite()
+        || options.heading_sample_seconds <= 0.0
+        || !options.spread_angle_degrees.is_finite()
+        || !(0.0..=360.0).contains(&options.spread_angle_degrees)
+        || !options.density.is_finite()
+        || options.density <= 0.0
+    {
         return Err(ScriptError::InvalidValue(
-            "heading sample interval must be finite and positive".to_string(),
+            "runtime options require spread in 0..=360 degrees and positive heading interval / density"
+                .to_string(),
         ));
     }
     Ok(())
@@ -416,6 +431,112 @@ motion {
     }
 
     #[test]
+    fn spread_angle_controls_full_fan_width_without_rotating_its_center() {
+        let script = ScriptEngine::compile(
+            r#"
+spawn {
+    count = 5;
+    angle = aim() + (i - (count - 1) / 2) * spread_angle / (count - 1);
+    speed = 100;
+    life = 2;
+}
+motion {
+    pos = polar(angle, speed * age);
+    x = origin_x + pos.x;
+    y = origin_y + pos.y;
+}
+"#,
+        )
+        .unwrap();
+        let mut aimed_right = input(0.1);
+        aimed_right.target_x = aimed_right.origin_x + 100.0;
+        aimed_right.target_y = aimed_right.origin_y;
+        let options = RuntimeOptions {
+            calculate_heading: true,
+            spread_angle_degrees: 90.0,
+            ..RuntimeOptions::default()
+        };
+        let bullets =
+            evaluate_with_options(&script, aimed_right, RuntimeLimits::default(), options).unwrap();
+        let wave_zero: Vec<_> = bullets
+            .iter()
+            .filter(|item| item.bullet.wave == 0)
+            .collect();
+        assert_eq!(wave_zero.len(), 5);
+        assert!((wave_zero[0].bullet.angle + std::f64::consts::FRAC_PI_4).abs() < 1e-10);
+        assert!(wave_zero[2].bullet.angle.abs() < 1e-10);
+        assert!((wave_zero[4].bullet.angle - std::f64::consts::FRAC_PI_4).abs() < 1e-10);
+        assert!(
+            (wave_zero[4].bullet.angle - wave_zero[0].bullet.angle - std::f64::consts::FRAC_PI_2)
+                .abs()
+                < 1e-10
+        );
+        assert!(wave_zero[2].heading.unwrap().abs() < 1e-10);
+        assert!((wave_zero[2].state.x - 20.0).abs() < 1e-10);
+        assert!((wave_zero[2].state.y - (-20.0)).abs() < 1e-10);
+    }
+
+    #[test]
+    fn density_is_exposed_to_spawn_and_motion() {
+        let script = ScriptEngine::compile(
+            r#"
+spawn { count = 1; angle = 0; speed = 100 * density; life = 2; }
+motion { x = origin_x + speed * age; y = origin_y + density; }
+"#,
+        )
+        .unwrap();
+        let options = RuntimeOptions {
+            density: 2.0,
+            ..RuntimeOptions::default()
+        };
+        let bullets =
+            evaluate_with_options(&script, input(0.05), RuntimeLimits::default(), options).unwrap();
+        assert_eq!(bullets[0].bullet.speed, 200.0);
+        assert!((bullets[0].state.x - 20.0).abs() < 1e-12);
+        assert!((bullets[0].state.y - (-18.0)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn density_changes_wave_rate_but_not_bullets_per_wave() {
+        let script = ScriptEngine::compile(Preset::AimedOdd.source()).unwrap();
+        let options = RuntimeOptions {
+            density: 2.0,
+            ..RuntimeOptions::default()
+        };
+        let bullets =
+            evaluate_with_options(&script, input(0.45), RuntimeLimits::default(), options).unwrap();
+        let wave_four: Vec<_> = bullets
+            .iter()
+            .filter(|bullet| bullet.bullet.wave == 4)
+            .collect();
+        assert_eq!(wave_four.len(), 5);
+        assert!((wave_four[0].bullet.age - 0.05).abs() < 1e-12);
+
+        let direct =
+            evaluate_with_options(&script, input(1.47), RuntimeLimits::default(), options).unwrap();
+        evaluate_with_options(&script, input(2.0), RuntimeLimits::default(), options).unwrap();
+        assert_eq!(
+            direct,
+            evaluate_with_options(&script, input(1.47), RuntimeLimits::default(), options).unwrap()
+        );
+    }
+
+    #[test]
+    fn invalid_density_is_rejected() {
+        let script = ScriptEngine::compile(Preset::AimedOdd.source()).unwrap();
+        for density in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let options = RuntimeOptions {
+                density,
+                ..RuntimeOptions::default()
+            };
+            assert!(matches!(
+                evaluate_with_options(&script, input(0.1), RuntimeLimits::default(), options),
+                Err(ScriptError::InvalidValue(_))
+            ));
+        }
+    }
+
+    #[test]
     fn total_live_bullet_limit_applies_across_all_waves() {
         let script = ScriptEngine::compile(
             r#"
@@ -440,7 +561,7 @@ motion { x = origin_x + speed * age; y = origin_y; }
         let error = evaluate(
             &script,
             RuntimeInput {
-                interval: 0.01,
+                interval: 0.001,
                 ..input(1.0)
             },
             RuntimeLimits::default(),

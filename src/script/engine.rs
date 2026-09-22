@@ -39,6 +39,8 @@ pub struct ScriptContext {
     pub target_x: f64,
     pub target_y: f64,
     pub seed: i64,
+    pub spread_angle: f64,
+    pub density: f64,
     pub angle: f64,
     pub speed: f64,
     pub life: f64,
@@ -51,6 +53,7 @@ impl ScriptContext {
         wave: i64,
         t: f64,
         input: crate::danmaku::RuntimeInput,
+        options: crate::danmaku::RuntimeOptions,
     ) -> Self {
         Self {
             i,
@@ -63,6 +66,8 @@ impl ScriptContext {
             target_x: input.target_x,
             target_y: input.target_y,
             seed: input.seed,
+            spread_angle: options.spread_angle_degrees.to_radians(),
+            density: options.density,
             angle: 0.0,
             speed: 0.0,
             life: 0.0,
@@ -76,6 +81,7 @@ impl ScriptContext {
         t: f64,
         age: f64,
         input: crate::danmaku::RuntimeInput,
+        options: crate::danmaku::RuntimeOptions,
         spawn: SpawnValues,
     ) -> Self {
         Self {
@@ -89,6 +95,8 @@ impl ScriptContext {
             target_x: input.target_x,
             target_y: input.target_y,
             seed: input.seed,
+            spread_angle: options.spread_angle_degrees.to_radians(),
+            density: options.density,
             angle: spawn.angle,
             speed: spawn.speed,
             life: spawn.life,
@@ -235,6 +243,8 @@ fn make_scope(context: ScriptContext) -> Scope<'static> {
     scope.push("target_x", context.target_x);
     scope.push("target_y", context.target_y);
     scope.push("seed", context.seed as f64);
+    scope.push("spread_angle", context.spread_angle);
+    scope.push("density", context.density);
     scope.push("angle", context.angle);
     scope.push("speed", context.speed);
     scope.push("life", context.life);
@@ -445,6 +455,50 @@ mod tests {
         }
     }
 
+    #[test]
+    fn bundled_samples_use_spread_angle_and_density_variables() {
+        let sources = [
+            include_str!("../../samples/touhou_rotating_ring.rhai"),
+            include_str!("../../samples/dodonpachi_daioujou_aimed_fan.rhai"),
+            include_str!("../../samples/mushihimesama_spiral_layers.rhai"),
+        ];
+        let target_angle = 43.2_f64.to_radians();
+        let input = crate::danmaku::RuntimeInput {
+            time: 0.4,
+            interval: 0.2,
+            seed: 1,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            target_x: 100.0 * target_angle.cos(),
+            target_y: 100.0 * target_angle.sin(),
+        };
+
+        for source in sources {
+            let script = ScriptEngine::compile(source).unwrap();
+            let spawn_angle = |options| {
+                let mut evaluator = script.evaluator(1_000);
+                script
+                    .eval_spawn(
+                        &mut evaluator,
+                        ScriptContext::spawn(1, 0, 2, 0.4, input, options),
+                    )
+                    .unwrap()
+                    .angle
+            };
+            let original = spawn_angle(Default::default());
+            let narrowed = spawn_angle(crate::danmaku::RuntimeOptions {
+                spread_angle_degrees: 180.0,
+                ..Default::default()
+            });
+            let denser = spawn_angle(crate::danmaku::RuntimeOptions {
+                density: 2.0,
+                ..Default::default()
+            });
+            assert!((narrowed - original).abs() > 1e-6);
+            assert!((denser - original).abs() > 1e-6);
+        }
+    }
+
     fn preset_input(time: f64, interval: f64, target_degrees: f64) -> crate::danmaku::RuntimeInput {
         let target_angle = target_degrees.to_radians();
         crate::danmaku::RuntimeInput {
@@ -487,6 +541,34 @@ mod tests {
         assert!((center.state.y + 20.0).abs() < 1e-12);
         assert!((bullets[0].bullet.angle - crate::danmaku::deg(-16.0)).abs() < 1e-12);
         assert!((bullets[4].bullet.angle - crate::danmaku::deg(16.0)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn spread_angle_sets_the_full_width_for_fans_and_partial_rings() {
+        let options = crate::danmaku::RuntimeOptions {
+            spread_angle_degrees: 90.0,
+            ..Default::default()
+        };
+        let input = preset_input(0.1, 1.0, 0.0);
+        for preset in [Preset::AimedOdd, Preset::QuantizedAimed, Preset::Hybrid] {
+            let script = ScriptEngine::compile(preset.source()).unwrap();
+            let bullets =
+                crate::danmaku::evaluate_with_options(&script, input, Default::default(), options)
+                    .unwrap();
+            let first = bullets.iter().find(|item| item.bullet.i == 0).unwrap();
+            let center = bullets.iter().find(|item| item.bullet.i == 2).unwrap();
+            let last = bullets.iter().find(|item| item.bullet.i == 4).unwrap();
+            assert!((first.bullet.angle - crate::danmaku::deg(-45.0)).abs() < 1e-10);
+            assert!(center.bullet.angle.abs() < 1e-10);
+            assert!((last.bullet.angle - crate::danmaku::deg(45.0)).abs() < 1e-10);
+        }
+
+        let script = ScriptEngine::compile(Preset::SpeedRing.source()).unwrap();
+        let bullets =
+            crate::danmaku::evaluate_with_options(&script, input, Default::default(), options)
+                .unwrap();
+        assert!(bullets[0].bullet.angle.abs() < 1e-10);
+        assert!((bullets[23].bullet.angle - crate::danmaku::deg(90.0)).abs() < 1e-10);
     }
 
     #[test]
@@ -665,7 +747,7 @@ motion {
             target_x: 8.0,
             target_y: 1.0,
         };
-        let context = ScriptContext::spawn(0, 0, 2, 0.5, input);
+        let context = ScriptContext::spawn(0, 0, 2, 0.5, input, Default::default());
         let mut evaluator = script.evaluator(1_000);
         let spawn = script.eval_spawn(&mut evaluator, context).unwrap();
 
@@ -703,7 +785,10 @@ motion { x = 0; y = 0; }
         };
         let mut evaluator = script.evaluator(64);
         let error = script
-            .eval_spawn(&mut evaluator, ScriptContext::spawn(0, 0, 0, 0.0, input))
+            .eval_spawn(
+                &mut evaluator,
+                ScriptContext::spawn(0, 0, 0, 0.0, input, Default::default()),
+            )
             .expect_err("unbounded script must stop at the operation limit");
         assert!(matches!(error, ScriptError::RuntimeError(_)));
     }
